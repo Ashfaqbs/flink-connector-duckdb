@@ -23,7 +23,7 @@ class DuckDBStatementFactoryTest {
     @Test
     void plainInsertWhenNoKeyFields() {
         String sql = DuckDBStatementFactory.buildStatement("t", schema(), Collections.emptyList());
-        assertThat(sql).isEqualTo("INSERT INTO t (id, name, score) VALUES (?, ?, ?)");
+        assertThat(sql).isEqualTo("INSERT INTO \"t\" (\"id\", \"name\", \"score\") VALUES (?, ?, ?)");
     }
 
     @Test
@@ -31,9 +31,9 @@ class DuckDBStatementFactoryTest {
         String sql = DuckDBStatementFactory.buildStatement("t", schema(), List.of("id"));
         assertThat(sql)
                 .isEqualTo(
-                        "INSERT INTO t (id, name, score) VALUES (?, ?, ?) "
-                                + "ON CONFLICT (id) DO UPDATE SET name = excluded.name, "
-                                + "score = excluded.score");
+                        "INSERT INTO \"t\" (\"id\", \"name\", \"score\") VALUES (?, ?, ?) "
+                                + "ON CONFLICT (\"id\") DO UPDATE SET \"name\" = excluded.\"name\", "
+                                + "\"score\" = excluded.\"score\"");
     }
 
     @Test
@@ -43,7 +43,20 @@ class DuckDBStatementFactoryTest {
                         "t", schema(), List.of("id", "name", "score"));
         assertThat(sql)
                 .isEqualTo(
-                        "INSERT INTO t (id, name, score) VALUES (?, ?, ?) "
-                                + "ON CONFLICT (id, name, score) DO NOTHING");
+                        "INSERT INTO \"t\" (\"id\", \"name\", \"score\") VALUES (?, ?, ?) "
+                                + "ON CONFLICT (\"id\", \"name\", \"score\") DO NOTHING");
+    }
+
+    @Test
+    void quotesIdentifiersThatCollideWithReservedWordsOrContainSpecialCharacters() {
+        RowType schemaWithReservedWord =
+                RowType.of(
+                        new LogicalType[] {new BigIntType(), new VarCharType(VarCharType.MAX_LENGTH)},
+                        new String[] {"select", "my-column"});
+        String sql =
+                DuckDBStatementFactory.buildStatement(
+                        "order", schemaWithReservedWord, Collections.emptyList());
+        assertThat(sql)
+                .isEqualTo("INSERT INTO \"order\" (\"select\", \"my-column\") VALUES (?, ?)");
     }
 }

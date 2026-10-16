@@ -13,8 +13,17 @@ import org.slf4j.LoggerFactory;
  * Binds each incoming row onto a reused {@link PreparedStatement} immediately (a Flink {@code
  * RowData} is not guaranteed to stay valid after {@link #write} returns -- the runtime may reuse
  * or mutate the underlying object on the next record), batching via JDBC's {@code addBatch} and
- * flushing on batch-size, on a timer, or when Flink asks for a final flush (checkpoint / end of
- * input).
+ * flushing on batch-size, when the flush interval has elapsed by the time the next row arrives
+ * (checked opportunistically in {@link #write}, not on a background timer -- a quiet stream with
+ * checkpointing disabled can leave a partial batch unflushed), or when Flink asks for a final
+ * flush (checkpoint / end of input).
+ *
+ * <p>Each flush commits its own JDBC transaction independently of Flink's checkpoint barriers
+ * (no two-phase-commit {@code Committer}). In upsert mode ({@code key-fields} set) a replay
+ * after restart-from-checkpoint is harmless -- {@code ON CONFLICT} makes it idempotent -- but in
+ * plain-insert mode, rows committed after the last successful checkpoint and before a crash will
+ * be re-inserted as duplicates on restart. This is an at-least-once sink for inserts, exactly-once
+ * only for upserts.
  *
  * <p>DuckDB locks its database file for exclusive single-process read-write access, so this
  * writer must not run with sink parallelism above 1 against a local file target -- see {@link
@@ -38,12 +47,34 @@ public final class DuckDBSinkWriter implements SinkWriter<RowData> {
         this.converter = converter;
         this.pendingCount = 0;
         this.lastFlushMillis = System.currentTimeMillis();
+
+        // Built into locals first, only assigned to the final fields once both steps succeed --
+        // otherwise a failure in setAutoCommit/prepareStatement after getConnection() succeeds
+        // would leak an open connection holding DuckDB's exclusive file lock for the rest of
+        // this JVM's lifetime (Flink would keep retrying writer creation in the same process,
+        // and every retry would fail to acquire a lock the previous leaked connection never
+        // released -- a self-inflicted permanent deadlock).
+        Connection conn;
         try {
-            this.connection = DriverManager.getConnection(options.jdbcUrl());
-            this.connection.setAutoCommit(false);
-            this.statement = connection.prepareStatement(insertSql);
+            conn = DriverManager.getConnection(options.jdbcUrl());
         } catch (SQLException e) {
             throw new RuntimeException("Failed to open DuckDB connection: " + options.jdbcUrl(), e);
+        }
+        try {
+            conn.setAutoCommit(false);
+            this.statement = conn.prepareStatement(insertSql);
+        } catch (SQLException e) {
+            closeQuietly(conn);
+            throw new RuntimeException("Failed to prepare DuckDB statement: " + insertSql, e);
+        }
+        this.connection = conn;
+    }
+
+    private static void closeQuietly(Connection conn) {
+        try {
+            conn.close();
+        } catch (SQLException e) {
+            LOG.warn("Failed to close DuckDB connection after a setup failure", e);
         }
     }
 
@@ -69,9 +100,12 @@ public final class DuckDBSinkWriter implements SinkWriter<RowData> {
 
     @Override
     public void close() throws Exception {
-        flushBuffer();
-        statement.close();
-        connection.close();
+        try {
+            flushBuffer();
+        } finally {
+            statement.close();
+            connection.close();
+        }
     }
 
     private void flushBuffer() {
@@ -95,6 +129,7 @@ public final class DuckDBSinkWriter implements SinkWriter<RowData> {
             connection.commit();
         } catch (SQLException e) {
             rollbackQuietly();
+            clearBatchQuietly();
             throw new RuntimeException(
                     "Failed to write "
                             + batchSize
@@ -110,6 +145,20 @@ public final class DuckDBSinkWriter implements SinkWriter<RowData> {
             connection.rollback();
         } catch (SQLException e) {
             LOG.warn("Rollback after a failed batch also failed", e);
+        }
+    }
+
+    private void clearBatchQuietly() {
+        // JDBC doesn't guarantee a driver clears its internal batch queue when executeBatch()
+        // throws (only guaranteed on success). This writer is currently always discarded after
+        // a RuntimeException propagates out of flushBuffer() -- Flink creates a fresh writer on
+        // restart -- so this is defense-in-depth against a future change that reuses the writer
+        // instance after catching the failure, which would otherwise resubmit stale rows
+        // alongside new ones on the next flush.
+        try {
+            statement.clearBatch();
+        } catch (SQLException e) {
+            LOG.warn("Failed to clear the batch after a failed flush", e);
         }
     }
 }

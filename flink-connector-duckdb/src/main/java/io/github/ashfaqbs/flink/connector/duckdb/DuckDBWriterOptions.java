@@ -24,6 +24,13 @@ public final class DuckDBWriterOptions implements Serializable {
         this.jdbcUrl = Objects.requireNonNull(jdbcUrl, "jdbcUrl");
         this.tableName = Objects.requireNonNull(tableName, "tableName");
         this.keyFields = Objects.requireNonNull(keyFields, "keyFields");
+        if (batchSize <= 0) {
+            throw new IllegalArgumentException("sink.batch-size must be positive, got " + batchSize);
+        }
+        if (flushIntervalMs < 0) {
+            throw new IllegalArgumentException(
+                    "sink.flush-interval-ms must not be negative, got " + flushIntervalMs);
+        }
         this.batchSize = batchSize;
         this.flushIntervalMs = flushIntervalMs;
     }
