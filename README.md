@@ -21,13 +21,10 @@ License: Apache 2.0 · Targets Flink **1.20 (LTS)** · Status: **v1, sink-only**
 ## Why this exists
 
 DuckDB is one of the most widely used embedded analytical databases, and as of this writing there
-is no official Flink SQL connector for it, and no well-known community one either. That's the
-same kind of gap ClickHouse had before
-[itinycheng/flink-connector-clickhouse](https://github.com/itinycheng/flink-connector-clickhouse)
-filled it — a widely-used store, a widely-used streaming engine, nothing connecting them in SQL.
-This connector (and its sibling,
-[flink-connector-qdrant](https://github.com/Ashfaqbs/flink-connector-qdrant)) are built the same
-way that one is: a proper dynamic table factory, not a one-off `DataStream` job per project.
+is no official Flink SQL connector for it, and no well-known community one either — a widely-used
+store, a widely-used streaming engine, nothing connecting them in SQL. This connector (and its
+sibling, [flink-connector-qdrant](https://github.com/Ashfaqbs/flink-connector-qdrant)) close that
+gap with a proper dynamic table factory, not a one-off `DataStream` job per project.
 
 ## Quickstart
 
