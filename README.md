@@ -1,5 +1,7 @@
 # flink-connector-duckdb
 
+[![CI](https://github.com/Ashfaqbs/flink-connector-duckdb/actions/workflows/ci.yml/badge.svg)](https://github.com/Ashfaqbs/flink-connector-duckdb/actions/workflows/ci.yml)
+
 **Write Apache Flink SQL results straight into [DuckDB](https://duckdb.org) — no custom
 `DataStream` job, no hand-rolled JDBC plumbing.**
 
